@@ -49,7 +49,7 @@ function applyKraftConfig(config: KsetConfig, kafkaDir: string): void {
     } else {
         updated = content
             .replace(/^listeners=PLAINTEXT:\/\/:9092,CONTROLLER:\/\/:9093$/m, `listeners=PLAINTEXT://:${config.port},CONTROLLER://:9093`)
-            .replace(/^advertised\.listeners=PLAINTEXT:\/\/localhost:9092$/m, `advertised.listeners=PLAINTEXT://localhost:${config.port}`)
+            .replace(/^advertised\.listeners=PLAINTEXT:\/\/localhost:[0-9]+(,CONTROLLER:\/\/localhost:[0-9]+)?$/m, `advertised.listeners=PLAINTEXT://localhost:${config.port},CONTROLLER://localhost:9093`)
             .replace(/^log\.dirs=\/tmp\/kraft-combined-logs$/m, `log.dirs=${config.logPath}`)
             .replace(/^offsets\.topic\.replication\.factor=1$/m, `offsets.topic.replication.factor=${config.replicationFactor}`)
             .replace(/^transaction\.state\.log\.replication\.factor=1$/m, `transaction.state.log.replication.factor=${config.replicationFactor}`);
@@ -58,7 +58,7 @@ function applyKraftConfig(config: KsetConfig, kafkaDir: string): void {
     writeFileSync(propertiesPath, updated);
 }
 
-function waitForKafka(port: number, retries = 20, interval = 2000): Promise<void> {
+function waitForZookeeper(port: number, retries = 20, interval = 2000): Promise<void> {
     return new Promise((resolve, reject) => {
         let attempts = 0;
         const check = () => {
@@ -68,6 +68,40 @@ function waitForKafka(port: number, retries = 20, interval = 2000): Promise<void
                 resolve();
             });
             socket.on('error', () => {
+                socket.destroy();
+                attempts++;
+                if (attempts >= retries) {
+                    reject(new Error(`Zookeeper가 ${port} 포트에서 응답하지 않아요`));
+                } else {
+                    setTimeout(check, interval);
+                }
+            });
+        };
+        check();
+    });
+}
+
+function waitForKafka(port: number, retries = 15, interval = 3000): Promise<void> {
+    return new Promise((resolve, reject) => {
+        let attempts = 0;
+        const check = () => {
+            const socket = net.createConnection(port, 'localhost');
+            socket.setTimeout(2000);
+            socket.on('connect', () => {
+                socket.destroy();
+                // 포트 열렸어도 Kafka 완전 초기화까지 추가 대기
+                setTimeout(resolve, 3000);
+            });
+            socket.on('error', () => {
+                socket.destroy();
+                attempts++;
+                if (attempts >= retries) {
+                    reject(new Error(`Kafka가 ${port} 포트에서 응답하지 않아요`));
+                } else {
+                    setTimeout(check, interval);
+                }
+            });
+            socket.on('timeout', () => {
                 socket.destroy();
                 attempts++;
                 if (attempts >= retries) {
@@ -130,12 +164,27 @@ export async function generateTarball(config: KsetConfig): Promise<void> {
     const configPath = join(kafkaDir, 'config', 'server.properties');
     const startScript = join(kafkaDir, 'bin', 'kafka-server-start.sh');
 
+    // 6. 초기 토픽 생성
     if (config.createTopic && config.topicName && config.partitions) {
         console.log(`\n📌 토픽 생성을 위해 Kafka를 잠깐 시작할게요...`);
         const kafkaStartSh = join(kafkaDir, 'bin', 'kafka-server-start.sh');
         const kafkaStopSh = join(kafkaDir, 'bin', 'kafka-server-stop.sh');
         const kafkaTopicsSh = join(kafkaDir, 'bin', 'kafka-topics.sh');
         const propertiesPath = getPropertiesPath(kafkaDir, config.mode, config.version);
+
+        if (config.mode === 'zookeeper') {
+            const zookeeperStartSh = join(kafkaDir, 'bin', 'zookeeper-server-start.sh');
+            const zookeeperPropertiesPath = join(kafkaDir, 'config', 'zookeeper.properties');
+
+            const zookeeperProcess = spawn(zookeeperStartSh, [zookeeperPropertiesPath], {
+                detached: true,
+                stdio: 'ignore',
+            });
+            zookeeperProcess.unref();
+
+            console.log(`⏳ Zookeeper 시작 대기 중...`);
+            await waitForZookeeper(2181);
+        }
 
         const kafkaProcess = spawn(kafkaStartSh, [propertiesPath], {
             detached: true,
@@ -159,8 +208,23 @@ export async function generateTarball(config: KsetConfig): Promise<void> {
 
         console.log(`\n🛑 Kafka 종료 중...`);
         execSync(`${kafkaStopSh}`, {stdio: 'inherit'});
+
+        if (config.mode === 'zookeeper') {
+            const zookeeperStopSh = join(kafkaDir, 'bin', 'zookeeper-server-stop.sh');
+            console.log(`🛑 Zookeeper 종료 중...`);
+            execSync(`${zookeeperStopSh}`, {stdio: 'inherit'});
+        }
     }
 
     console.log(`\n👉 시작하려면:`);
-    console.log(`   ${startScript} ${configPath}`);
+    if (config.mode === 'zookeeper') {
+        const zookeeperStartSh = join(kafkaDir, 'bin', 'zookeeper-server-start.sh');
+        const zookeeperPropertiesPath = join(kafkaDir, 'config', 'zookeeper.properties');
+        console.log(`\n   1. Zookeeper 먼저 시작:`);
+        console.log(`      ${zookeeperStartSh} ${zookeeperPropertiesPath}`);
+        console.log(`\n   2. Kafka 시작:`);
+        console.log(`      ${startScript} ${configPath}`);
+    } else {
+        console.log(`   ${startScript} ${configPath}`);
+    }
 }
