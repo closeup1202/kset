@@ -1,13 +1,22 @@
 import {KsetConfig} from '../wizard/initWizard.js';
-import {execSync} from 'child_process';
+import {execSync, spawn} from 'child_process';
 import {mkdirSync, readFileSync, writeFileSync} from 'fs';
 import {join, resolve} from 'path';
+import net from 'net';
 
 const TARBALL_URL = (version: string) =>
     `https://downloads.apache.org/kafka/${version}/kafka_2.13-${version}.tgz`;
 
 const KAFKA_DIR = (version: string) =>
     `kafka_2.13-${version}`;
+
+function getPropertiesPath(kafkaDir: string, mode: 'kraft' | 'zookeeper', version: string): string {
+    const [major] = version.split('.').map(Number);
+    if (mode === 'kraft' && major < 4) {
+        return join(kafkaDir, 'config', 'kraft', 'server.properties');
+    }
+    return join(kafkaDir, 'config', 'server.properties');
+}
 
 function applyZookeeperConfig(config: KsetConfig, kafkaDir: string): void {
     const propertiesPath = join(kafkaDir, 'config', 'server.properties');
@@ -24,17 +33,52 @@ function applyZookeeperConfig(config: KsetConfig, kafkaDir: string): void {
 }
 
 function applyKraftConfig(config: KsetConfig, kafkaDir: string): void {
-    const propertiesPath = join(kafkaDir, 'config', 'kraft', 'server.properties');
+    const propertiesPath = getPropertiesPath(kafkaDir, config.mode, config.version);
     const content = readFileSync(propertiesPath, 'utf-8');
+    const [major] = config.version.split('.').map(Number);
 
-    const updated = content
-        .replace(/^listeners=PLAINTEXT:\/\/:9092,CONTROLLER:\/\/:9093$/m, `listeners=PLAINTEXT://:${config.port},CONTROLLER://:9093`)
-        .replace(/^advertised\.listeners=PLAINTEXT:\/\/localhost:9092$/m, `advertised.listeners=PLAINTEXT://localhost:${config.port}`)
-        .replace(/^log\.dirs=\/tmp\/kraft-combined-logs$/m, `log.dirs=${config.logPath}`)
-        .replace(/^offsets\.topic\.replication\.factor=1$/m, `offsets.topic.replication.factor=${config.replicationFactor}`)
-        .replace(/^transaction\.state\.log\.replication\.factor=1$/m, `transaction.state.log.replication.factor=${config.replicationFactor}`);
+    let updated: string;
+
+    if (major >= 4) {
+        updated = content
+            .replace(/^listeners=PLAINTEXT:\/\/:[0-9]+,CONTROLLER:\/\/:[0-9]+$/m, `listeners=PLAINTEXT://:${config.port},CONTROLLER://:9093`)
+            .replace(/^advertised\.listeners=PLAINTEXT:\/\/localhost:[0-9]+,CONTROLLER:\/\/localhost:[0-9]+$/m, `advertised.listeners=PLAINTEXT://localhost:${config.port},CONTROLLER://localhost:9093`)
+            .replace(/^log\.dirs=.*$/m, `log.dirs=${config.logPath}`)
+            .replace(/^offsets\.topic\.replication\.factor=1$/m, `offsets.topic.replication.factor=${config.replicationFactor}`)
+            .replace(/^transaction\.state\.log\.replication\.factor=1$/m, `transaction.state.log.replication.factor=${config.replicationFactor}`);
+    } else {
+        updated = content
+            .replace(/^listeners=PLAINTEXT:\/\/:9092,CONTROLLER:\/\/:9093$/m, `listeners=PLAINTEXT://:${config.port},CONTROLLER://:9093`)
+            .replace(/^advertised\.listeners=PLAINTEXT:\/\/localhost:9092$/m, `advertised.listeners=PLAINTEXT://localhost:${config.port}`)
+            .replace(/^log\.dirs=\/tmp\/kraft-combined-logs$/m, `log.dirs=${config.logPath}`)
+            .replace(/^offsets\.topic\.replication\.factor=1$/m, `offsets.topic.replication.factor=${config.replicationFactor}`)
+            .replace(/^transaction\.state\.log\.replication\.factor=1$/m, `transaction.state.log.replication.factor=${config.replicationFactor}`);
+    }
 
     writeFileSync(propertiesPath, updated);
+}
+
+function waitForKafka(port: number, retries = 20, interval = 2000): Promise<void> {
+    return new Promise((resolve, reject) => {
+        let attempts = 0;
+        const check = () => {
+            const socket = net.createConnection(port, 'localhost');
+            socket.on('connect', () => {
+                socket.destroy();
+                resolve();
+            });
+            socket.on('error', () => {
+                socket.destroy();
+                attempts++;
+                if (attempts >= retries) {
+                    reject(new Error(`Kafka가 ${port} 포트에서 응답하지 않아요`));
+                } else {
+                    setTimeout(check, interval);
+                }
+            });
+        };
+        check();
+    });
 }
 
 export async function generateTarball(config: KsetConfig): Promise<void> {
@@ -68,18 +112,54 @@ export async function generateTarball(config: KsetConfig): Promise<void> {
     if (config.mode === 'kraft') {
         console.log(`\n🔧 KRaft storage 초기화 중...`);
         const kafkaStorageSh = join(kafkaDir, 'bin', 'kafka-storage.sh');
-        const kraftPropertiesPath = join(kafkaDir, 'config', 'kraft', 'server.properties');
-        const uuid = execSync(`${kafkaStorageSh} random-uuid`).toString().trim();
-        execSync(`${kafkaStorageSh} format -t ${uuid} -c "${kraftPropertiesPath}"`, {stdio: 'inherit'});
+        const propertiesPath = getPropertiesPath(kafkaDir, config.mode, config.version);
+        const [major] = config.version.split('.').map(Number);
+
+        if (major >= 4) {
+            const uuid = execSync(`${kafkaStorageSh} random-uuid`).toString().trim();
+            execSync(`${kafkaStorageSh} format --standalone -t ${uuid} -c "${propertiesPath}"`, {stdio: 'inherit'});
+        } else {
+            const uuid = execSync(`${kafkaStorageSh} random-uuid`).toString().trim();
+            execSync(`${kafkaStorageSh} format -t ${uuid} -c "${propertiesPath}"`, {stdio: 'inherit'});
+        }
     }
 
     console.log(`\n✅ Kafka ${config.version} 설치 완료!`);
     console.log(`📁 설치 경로: ${kafkaDir}`);
 
-    const configPath = config.mode === 'kraft'
-        ? join(kafkaDir, 'config', 'kraft', 'server.properties')
-        : join(kafkaDir, 'config', 'server.properties');
+    const configPath = join(kafkaDir, 'config', 'server.properties');
     const startScript = join(kafkaDir, 'bin', 'kafka-server-start.sh');
+
+    if (config.createTopic && config.topicName && config.partitions) {
+        console.log(`\n📌 토픽 생성을 위해 Kafka를 잠깐 시작할게요...`);
+        const kafkaStartSh = join(kafkaDir, 'bin', 'kafka-server-start.sh');
+        const kafkaStopSh = join(kafkaDir, 'bin', 'kafka-server-stop.sh');
+        const kafkaTopicsSh = join(kafkaDir, 'bin', 'kafka-topics.sh');
+        const propertiesPath = getPropertiesPath(kafkaDir, config.mode, config.version);
+
+        const kafkaProcess = spawn(kafkaStartSh, [propertiesPath], {
+            detached: true,
+            stdio: 'ignore',
+        });
+        kafkaProcess.unref();
+
+        console.log(`⏳ Kafka 시작 대기 중...`);
+        await waitForKafka(config.port);
+
+        console.log(`📌 토픽 생성 중...`);
+        execSync(
+            `${kafkaTopicsSh} --create \
+        --topic ${config.topicName} \
+        --partitions ${config.partitions} \
+        --replication-factor ${config.replicationFactor} \
+        --bootstrap-server localhost:${config.port}`,
+            {stdio: 'inherit'}
+        );
+        console.log(`✅ 토픽 "${config.topicName}" 생성 완료!`);
+
+        console.log(`\n🛑 Kafka 종료 중...`);
+        execSync(`${kafkaStopSh}`, {stdio: 'inherit'});
+    }
 
     console.log(`\n👉 시작하려면:`);
     console.log(`   ${startScript} ${configPath}`);
