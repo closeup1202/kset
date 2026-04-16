@@ -1,0 +1,13 @@
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+out/
+
+### Modules ###
+/node_modules
+/dist
+
+### Claude ###
+.claude/
