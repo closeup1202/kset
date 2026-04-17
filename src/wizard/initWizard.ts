@@ -1,4 +1,4 @@
-import { select, input, confirm } from '@inquirer/prompts';
+import {confirm, input, select} from '@inquirer/prompts';
 
 export interface KsetConfig {
     environment: 'local' | 'docker' | 'systemd';
@@ -10,7 +10,7 @@ export interface KsetConfig {
     createTopic: boolean;
     topicName?: string;
     partitions?: number;
-    installPath: string;
+    installPath?: string;
     logPath: string;
 }
 
@@ -40,15 +40,15 @@ export async function runInitWizard(): Promise<KsetConfig> {
     const environment = await select({
         message: '설치 환경을 선택하세요',
         choices: [
-            { name: '로컬 직접 설치 (tarball)', value: 'local' as const },
-            { name: 'Docker / docker-compose', value: 'docker' as const },
-            { name: '운영 서버 (Linux systemd)', value: 'systemd' as const },
+            {name: '로컬 직접 설치 (tarball)', value: 'local' as const},
+            {name: 'Docker / docker-compose', value: 'docker' as const},
+            {name: '운영 서버 (Linux systemd)', value: 'systemd' as const},
         ],
     });
 
     const version = await select({
         message: 'Kafka 버전을 선택하세요',
-        choices: kafkaVersions.map((v) => ({ name: v, value: v })),
+        choices: kafkaVersions.map((v) => ({name: v, value: v})),
     });
 
     const mode = kraftOnly(version)
@@ -57,10 +57,10 @@ export async function runInitWizard(): Promise<KsetConfig> {
             message: '모드를 선택하세요',
             choices: supportsKRaft(version)
                 ? [
-                    { name: 'KRaft (권장)', value: 'kraft' as const },
-                    { name: 'Zookeeper', value: 'zookeeper' as const },
+                    {name: 'KRaft (권장)', value: 'kraft' as const},
+                    {name: 'Zookeeper', value: 'zookeeper' as const},
                 ]
-                : [{ name: 'Zookeeper (이 버전은 KRaft를 지원하지 않아요)', value: 'zookeeper' as const }],
+                : [{name: 'Zookeeper (이 버전은 KRaft를 지원하지 않아요)', value: 'zookeeper' as const}],
         });
 
     if (kraftOnly(version)) {
@@ -70,10 +70,10 @@ export async function runInitWizard(): Promise<KsetConfig> {
     const brokerCount = await select({
         message: '브로커 수를 선택하세요',
         choices: [
-            { name: '1', value: 1 },
-            { name: '3', value: 3 },
-            { name: '5', value: 5 },
-            { name: '7', value: 7 },
+            {name: '1', value: 1},
+            {name: '3', value: 3},
+            {name: '5', value: 5},
+            {name: '7', value: 7},
         ],
     });
 
@@ -118,15 +118,21 @@ export async function runInitWizard(): Promise<KsetConfig> {
         partitions = parseInt(partitionsInput);
     }
 
-    const installPath = await input({
-        message: '설치 경로를 입력하세요',
-        default: './kafka',
-    });
+    let installPath: string | undefined;
 
-    const logPath = await input({
-        message: '로그 파일 경로를 입력하세요',
-        default: '/tmp/kafka-logs',
-    });
+    if (environment === 'local' || environment === 'systemd') {
+        installPath = await input({
+            message: '설치 경로를 입력하세요',
+            default: './kafka',
+        });
+    }
+
+    const logPath = environment === 'docker'
+        ? 'kafka-logs'
+        : await input({
+            message: '로그 파일 경로를 입력하세요',
+            default: '/tmp/kafka-logs',
+        });
 
     return {
         environment,

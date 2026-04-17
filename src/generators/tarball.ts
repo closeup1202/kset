@@ -116,7 +116,7 @@ function waitForKafka(port: number, retries = 15, interval = 3000): Promise<void
 }
 
 export async function generateTarball(config: KsetConfig): Promise<void> {
-    const installPath = resolve(config.installPath);
+    const installPath = resolve(config.installPath ?? './kafka');
     const tarballUrl = TARBALL_URL(config.version);
     const tarballFilename = `kafka_2.13-${config.version}.tgz`;
     const tarballPath = join(installPath, tarballFilename);

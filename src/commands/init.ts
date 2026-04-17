@@ -1,6 +1,7 @@
 import {program} from './program.js';
 import {runInitWizard} from '../wizard/initWizard.js';
 import {generateTarball} from '../generators/tarball.js';
+import { generateDocker } from '../generators/docker.js';
 
 program
     .command('init')
@@ -14,5 +15,7 @@ program
 
         if (config.environment === 'local') {
             await generateTarball(config);
+        } else if (config.environment === 'docker') {
+            await generateDocker(config);
         }
     });
