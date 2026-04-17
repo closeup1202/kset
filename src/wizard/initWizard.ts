@@ -73,7 +73,6 @@ export async function runInitWizard(): Promise<KsetConfig> {
             {name: '1', value: 1},
             {name: '3', value: 3},
             {name: '5', value: 5},
-            {name: '7', value: 7},
         ],
     });
 

@@ -1,0 +1,18 @@
+services:
+  kafka:
+    image: apache/kafka:{{VERSION}}
+    user: root
+    ports:
+      - "{{PORT}}:{{PORT}}"
+      - "9093:9093"
+    volumes:
+      - ./server.properties:/opt/kafka/config/server.properties
+      - kafka-logs:/var/kafka/logs
+    command: >
+      bash -c "
+        /opt/kafka/bin/kafka-storage.sh format --standalone -t $$(/opt/kafka/bin/kafka-storage.sh random-uuid) -c /opt/kafka/config/server.properties &&
+        /opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/server.properties
+      "
+
+volumes:
+  kafka-logs:
