@@ -8,14 +8,34 @@ function checkJava(): void {
         const match = output.match(/version "(\d+)/);
         if (match) {
             const major = parseInt(match[1]);
-            if (major >= 11) {
-                console.log(`✅ Java ${major} detected`);
+            if (major >= 17) {
+                console.log(`✅ Java ${major} detected (recommended)`);
+            } else if (major >= 11) {
+                console.log(`✅ Java ${major} detected (minimum requirement met, Java 17+ recommended)`);
             } else {
                 console.log(`❌ Java ${major} detected — Kafka requires Java 11 or higher`);
             }
         }
     } catch {
-        console.log('❌ Java does not exist');
+        console.log('❌ Java not found — please install Java 17+');
+    }
+}
+
+function checkDocker(): void {
+    try {
+        const output = execSync('docker --version 2>&1').toString().trim();
+        console.log(`✅ ${output}`);
+    } catch {
+        console.log('⚠️  Docker not found — required for Docker environment');
+    }
+}
+
+function checkDockerCompose(): void {
+    try {
+        const output = execSync('docker compose version 2>&1').toString().trim();
+        console.log(`✅ ${output}`);
+    } catch {
+        console.log('⚠️  Docker Compose not found — required for Docker environment');
     }
 }
 
@@ -27,20 +47,24 @@ function checkPort(port: number): Promise<void> {
                 console.log(`✅ Port ${port} available`);
                 resolve();
             });
-        })
+        });
         server.on('error', () => {
-            console.log(`❌ Port ${port} Already in progress`);
+            console.log(`❌ Port ${port} already in use`);
             resolve();
         });
-    })
+    });
 }
 
 program
     .command('check')
     .description('Check system requirements for Kafka installation')
-    .action(async () => {
-        console.log('Started check environment...');
+    .option('-p, --port <number>', 'port to check', '9092')
+    .action(async (options) => {
+        const port = parseInt(options.port);
+        console.log('\n🔍 Checking system requirements...\n');
         checkJava();
-        await checkPort(9092);
-        console.log("\nCompleted check environment.");
+        checkDocker();
+        checkDockerCompose();
+        await checkPort(port);
+        console.log('\n✅ Check completed.');
     });
