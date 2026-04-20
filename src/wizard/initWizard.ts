@@ -1,7 +1,7 @@
 import {confirm, input, select} from '@inquirer/prompts';
 
 export interface KsetConfig {
-    environment: 'local' | 'docker' | 'systemd';
+    environment: 'local' | 'docker';
     version: string;
     mode: 'kraft' | 'zookeeper';
     brokerCount: number;
@@ -41,8 +41,7 @@ export async function runInitWizard(): Promise<KsetConfig> {
         message: '설치 환경을 선택하세요',
         choices: [
             {name: '로컬 직접 설치 (tarball)', value: 'local' as const},
-            {name: 'Docker / docker-compose', value: 'docker' as const},
-            {name: '운영 서버 (Linux systemd)', value: 'systemd' as const},
+            {name: 'Docker / docker-compose', value: 'docker' as const}
         ],
     });
 
@@ -119,7 +118,7 @@ export async function runInitWizard(): Promise<KsetConfig> {
 
     let installPath: string | undefined;
 
-    if (environment === 'local' || environment === 'systemd') {
+    if (environment === 'local') {
         installPath = await input({
             message: '설치 경로를 입력하세요',
             default: './kafka',

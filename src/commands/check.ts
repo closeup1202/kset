@@ -1,4 +1,4 @@
-import { program } from './program.js';
+import {program} from './program.js';
 import {execSync} from 'child_process';
 import net from 'net';
 
