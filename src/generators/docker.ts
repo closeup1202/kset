@@ -70,20 +70,20 @@ export async function generateDocker(config: KsetConfig): Promise<void> {
     let clusterId: string | undefined;
 
     if (config.brokerCount > 1) {
-        // 멀티 브로커: 환경변수 방식 사용, server.properties 불필요
+        // multi-broker: use environment variables, server.properties not needed
         const uuid = crypto.randomUUID().replace(/-/g, '');
         const buffer = Buffer.from(uuid, 'hex');
         clusterId = buffer.toString('base64url').substring(0, 22);
     } else {
-        // 단일 브로커: server.properties 생성
+        // single broker: generate server.properties
         const url = config.mode === 'kraft'
             ? KRAFT_PROPERTIES_URL(config.version)
             : ZOOKEEPER_PROPERTIES_URL(config.version);
 
-        console.log('\n📥 공식 server.properties 다운로드 중...');
+        console.log('\n📥 Downloading official server.properties...');
         const response = await fetch(url);
         if (!response.ok) {
-            throw new Error(`server.properties 다운로드 실패: ${response.status}`);
+            throw new Error(`Failed to download server.properties: ${response.status}`);
         }
 
         const baseContent = await response.text();
@@ -96,8 +96,8 @@ export async function generateDocker(config: KsetConfig): Promise<void> {
 
     writeFileSync(join(outputDir, 'docker-compose.yml'), generateDockerCompose(config, clusterId));
 
-    console.log(`\n✅ Docker 설정 파일 생성 완료!`);
-    console.log(`📁 생성 경로: ${outputDir}`);
+    console.log(`\n✅ Docker configuration files generated!`);
+    console.log(`📁 Output path: ${outputDir}`);
     console.log(`   - docker-compose.yml`);
     if (config.brokerCount === 1) {
         console.log(`   - server.properties`);
@@ -107,7 +107,7 @@ export async function generateDocker(config: KsetConfig): Promise<void> {
 
     if (config.createTopic && config.topicName && config.partitions) {
         const targetService = config.brokerCount > 1 ? 'kafka-1' : 'kafka';
-        console.log(`\n📌 토픽 생성 명령어:`);
+        console.log(`\n📌 Topic creation command:`);
         console.log(`   docker compose exec ${targetService} /opt/kafka/bin/kafka-topics.sh --create \\`);
         console.log(`     --topic ${config.topicName} \\`);
         console.log(`     --partitions ${config.partitions} \\`);

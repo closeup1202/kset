@@ -71,7 +71,7 @@ function waitForZookeeper(port: number, retries = 20, interval = 2000): Promise<
                 socket.destroy();
                 attempts++;
                 if (attempts >= retries) {
-                    reject(new Error(`Zookeeper가 ${port} 포트에서 응답하지 않아요`));
+                    reject(new Error(`Zookeeper is not responding on port ${port}`));
                 } else {
                     setTimeout(check, interval);
                 }
@@ -89,14 +89,14 @@ function waitForKafka(port: number, retries = 15, interval = 3000): Promise<void
             socket.setTimeout(2000);
             socket.on('connect', () => {
                 socket.destroy();
-                // 포트 열렸어도 Kafka 완전 초기화까지 추가 대기
+                // wait for Kafka to fully initialize even after port opens
                 setTimeout(resolve, 3000);
             });
             socket.on('error', () => {
                 socket.destroy();
                 attempts++;
                 if (attempts >= retries) {
-                    reject(new Error(`Kafka가 ${port} 포트에서 응답하지 않아요`));
+                    reject(new Error(`Kafka is not responding on port ${port}`));
                 } else {
                     setTimeout(check, interval);
                 }
@@ -105,7 +105,7 @@ function waitForKafka(port: number, retries = 15, interval = 3000): Promise<void
                 socket.destroy();
                 attempts++;
                 if (attempts >= retries) {
-                    reject(new Error(`Kafka가 ${port} 포트에서 응답하지 않아요`));
+                    reject(new Error(`Kafka is not responding on port ${port}`));
                 } else {
                     setTimeout(check, interval);
                 }
@@ -122,29 +122,24 @@ export async function generateTarball(config: KsetConfig): Promise<void> {
     const tarballPath = join(installPath, tarballFilename);
     const kafkaDir = join(installPath, KAFKA_DIR(config.version));
 
-    // 1. installPath 생성
     mkdirSync(installPath, {recursive: true});
 
-    // 2. tarball 다운로드
-    console.log(`\n📥 Kafka ${config.version} 다운로드 중...`);
+    console.log(`\n📥 Downloading Kafka ${config.version}...`);
     execSync(`curl -L --progress-bar "${tarballUrl}" -o "${tarballPath}"`, {stdio: 'inherit'});
 
-    // 3. 압축 해제
-    console.log(`\n📦 압축 해제 중...`);
+    console.log(`\n📦 Extracting archive...`);
     execSync(`tar -xzf "${tarballPath}" -C "${installPath}"`, {stdio: 'inherit'});
     execSync(`rm "${tarballPath}"`);
 
-    // 4. server.properties 치환
-    console.log(`\n⚙️  설정 파일 적용 중...`);
+    console.log(`\n⚙️  Applying configuration...`);
     if (config.mode === 'kraft') {
         applyKraftConfig(config, kafkaDir);
     } else {
         applyZookeeperConfig(config, kafkaDir);
     }
 
-    // 5. KRaft 모드면 storage format
     if (config.mode === 'kraft') {
-        console.log(`\n🔧 KRaft storage 초기화 중...`);
+        console.log(`\n🔧 Initializing KRaft storage...`);
         const kafkaStorageSh = join(kafkaDir, 'bin', 'kafka-storage.sh');
         const propertiesPath = getPropertiesPath(kafkaDir, config.mode, config.version);
         const [major] = config.version.split('.').map(Number);
@@ -158,15 +153,14 @@ export async function generateTarball(config: KsetConfig): Promise<void> {
         }
     }
 
-    console.log(`\n✅ Kafka ${config.version} 설치 완료!`);
-    console.log(`📁 설치 경로: ${kafkaDir}`);
+    console.log(`\n✅ Kafka ${config.version} installed successfully!`);
+    console.log(`📁 Installation path: ${kafkaDir}`);
 
     const configPath = join(kafkaDir, 'config', 'server.properties');
     const startScript = join(kafkaDir, 'bin', 'kafka-server-start.sh');
 
-    // 6. 초기 토픽 생성
     if (config.createTopic && config.topicName && config.partitions) {
-        console.log(`\n📌 토픽 생성을 위해 Kafka를 잠깐 시작할게요...`);
+        console.log(`\n📌 Starting Kafka briefly to create the topic...`);
         const kafkaStartSh = join(kafkaDir, 'bin', 'kafka-server-start.sh');
         const kafkaStopSh = join(kafkaDir, 'bin', 'kafka-server-stop.sh');
         const kafkaTopicsSh = join(kafkaDir, 'bin', 'kafka-topics.sh');
@@ -182,7 +176,7 @@ export async function generateTarball(config: KsetConfig): Promise<void> {
             });
             zookeeperProcess.unref();
 
-            console.log(`⏳ Zookeeper 시작 대기 중...`);
+            console.log(`⏳ Waiting for Zookeeper to start...`);
             await waitForZookeeper(2181);
         }
 
@@ -192,10 +186,10 @@ export async function generateTarball(config: KsetConfig): Promise<void> {
         });
         kafkaProcess.unref();
 
-        console.log(`⏳ Kafka 시작 대기 중...`);
+        console.log(`⏳ Waiting for Kafka to start...`);
         await waitForKafka(config.port);
 
-        console.log(`📌 토픽 생성 중...`);
+        console.log(`📌 Creating topic...`);
         execSync(
             `${kafkaTopicsSh} --create \
         --topic ${config.topicName} \
@@ -204,25 +198,25 @@ export async function generateTarball(config: KsetConfig): Promise<void> {
         --bootstrap-server localhost:${config.port}`,
             {stdio: 'inherit'}
         );
-        console.log(`✅ 토픽 "${config.topicName}" 생성 완료!`);
+        console.log(`✅ Topic "${config.topicName}" created successfully!`);
 
-        console.log(`\n🛑 Kafka 종료 중...`);
+        console.log(`\n🛑 Stopping Kafka...`);
         execSync(`${kafkaStopSh}`, {stdio: 'inherit'});
 
         if (config.mode === 'zookeeper') {
             const zookeeperStopSh = join(kafkaDir, 'bin', 'zookeeper-server-stop.sh');
-            console.log(`🛑 Zookeeper 종료 중...`);
+            console.log(`🛑 Stopping Zookeeper...`);
             execSync(`${zookeeperStopSh}`, {stdio: 'inherit'});
         }
     }
 
-    console.log(`\n👉 시작하려면:`);
+    console.log(`\n👉 To start:`);
     if (config.mode === 'zookeeper') {
         const zookeeperStartSh = join(kafkaDir, 'bin', 'zookeeper-server-start.sh');
         const zookeeperPropertiesPath = join(kafkaDir, 'config', 'zookeeper.properties');
-        console.log(`\n   1. Zookeeper 먼저 시작:`);
+        console.log(`\n   1. Start Zookeeper first:`);
         console.log(`      ${zookeeperStartSh} ${zookeeperPropertiesPath}`);
-        console.log(`\n   2. Kafka 시작:`);
+        console.log(`\n   2. Start Kafka:`);
         console.log(`      ${startScript} ${configPath}`);
     } else {
         console.log(`   ${startScript} ${configPath}`);
