@@ -1,6 +1,6 @@
 {
   "name": "@closeup1202/kset",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Apache Kafka setup CLI — interactive installer for local and Docker environments",
   "main": "dist/index.js",
   "bin": {
